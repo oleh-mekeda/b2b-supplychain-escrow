@@ -51,5 +51,54 @@ contract SupplyChainEscrow {
 
     constructor() {
         orderCount = 0;
-    }
+    
 }   
+
+/**
+     * @dev Initializes a new escrow order.
+     */
+    function createOrder(
+        address payable _seller,
+        address _inspector,
+        bytes32 _itemHash,
+        uint256 _deliveryDeadline,
+        uint256 _inspectionWindow
+    ) external returns (uint256) {
+        require(_seller != address(0), "Invalid seller address");
+        require(_inspector != address(0), "Invalid inspector address");
+        require(_deliveryDeadline > block.timestamp, "Deadline must be in the future");
+
+        orderCount++;
+        orders[orderCount] = EscrowOrder({
+            buyer: payable(msg.sender),
+            seller: _seller,
+            inspector: _inspector,
+            amount: 0,
+            itemHash: _itemHash,
+            deliveryDeadline: _deliveryDeadline,
+            deliveryTimestamp: 0,
+            inspectionWindow: _inspectionWindow,
+            state: State.Created,
+            isInspected: false
+        });
+
+        emit OrderCreated(orderCount, msg.sender, _seller, _inspector, 0);
+        return orderCount;
+    }
+
+    /**
+     * @dev Deposits funds into escrow vault for a specific order.
+     */
+    function depositFunds(uint256 _orderId) external payable {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.buyer, "Only buyer can deposit funds");
+        require(order.state == State.Created, "Invalid order state for deposit");
+        require(msg.value > 0, "Deposit amount must be greater than zero");
+
+        order.amount = msg.value;
+        order.state = State.FundsDeposited;
+
+        emit FundsDeposited(_orderId, msg.sender, msg.value);
+    }
+}
