@@ -7,7 +7,7 @@ pragma solidity ^0.8.20;
  */
 contract SupplyChainEscrow {
 
-    // Lifecycle states of a B2B supply chain escrow order
+    // 1. Lifecycle states of a B2B supply chain escrow order
     enum State { 
         Created, 
         FundsDeposited, 
@@ -17,7 +17,7 @@ contract SupplyChainEscrow {
         RejectedAndRefunded 
     }
 
-// 2. Structure defining all properties of an escrow order
+    // 2. Structure defining all properties of an escrow order
     struct EscrowOrder {
         address payable buyer;        // Address of the buyer
         address payable seller;       // Address of the seller
@@ -51,10 +51,9 @@ contract SupplyChainEscrow {
 
     constructor() {
         orderCount = 0;
-    
-}   
+    }
 
-/**
+    /**
      * @dev Initializes a new escrow order.
      */
     function createOrder(
@@ -100,5 +99,85 @@ contract SupplyChainEscrow {
         order.state = State.FundsDeposited;
 
         emit FundsDeposited(_orderId, msg.sender, msg.value);
+    }
+
+    /**
+     * @dev Seller confirms shipment of goods before deadline.
+     */
+    function confirmDispatch(uint256 _orderId) external {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.seller, "Only seller can confirm dispatch");
+        require(order.state == State.FundsDeposited, "Invalid order state for dispatch");
+        require(block.timestamp <= order.deliveryDeadline, "Delivery deadline has passed");
+
+        order.state = State.Dispatched;
+        emit GoodsDispatched(_orderId, msg.sender);
+    }
+
+    /**
+     * @dev Seller confirms physical delivery to buyer's warehouse.
+     */
+    function confirmDelivery(uint256 _orderId) external {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.seller, "Only seller can confirm delivery");
+        require(order.state == State.Dispatched, "Invalid order state for delivery");
+
+        order.state = State.Delivered;
+        order.deliveryTimestamp = block.timestamp;
+
+        emit GoodsDelivered(_orderId, block.timestamp);
+    }
+
+    /**
+     * @dev Independent inspector submits quality report.
+     */
+    function submitInspectionReport(uint256 _orderId, bool _passed) external {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.inspector, "Only inspector can submit report");
+        require(order.state == State.Delivered, "Goods must be delivered first");
+
+        order.isInspected = _passed;
+    }
+
+    /**
+     * @dev Buyer accepts goods and releases escrow funds to seller.
+     */
+    function acceptGoodsAndPay(uint256 _orderId) external {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.buyer, "Only buyer can accept and pay");
+        require(order.state == State.Delivered, "Invalid order state for payment");
+        require(order.isInspected, "Inspection must pass before payment");
+
+        order.state = State.AcceptedAndPaid;
+
+        (bool success, ) = order.seller.call{value: order.amount}("");
+        require(success, "Payment transfer failed");
+
+        emit OrderAccepted(_orderId, order.seller, order.amount);
+    }
+
+    /**
+     * @dev Buyer claims refund if seller misses delivery deadline or inspection fails.
+     */
+    function claimRefund(uint256 _orderId) external {
+        EscrowOrder storage order = orders[_orderId];
+
+        require(msg.sender == order.buyer, "Only buyer can claim refund");
+
+        bool isExpired = (order.state == State.FundsDeposited && block.timestamp > order.deliveryDeadline);
+        bool isRejected = (order.state == State.Delivered && !order.isInspected);
+
+        require(isExpired || isRejected, "Refund conditions not met");
+
+        order.state = State.RejectedAndRefunded;
+
+        (bool success, ) = order.buyer.call{value: order.amount}("");
+        require(success, "Refund transfer failed");
+
+        emit OrderRejected(_orderId, order.buyer, order.amount);
     }
 }
