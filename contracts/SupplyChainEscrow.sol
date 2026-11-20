@@ -3,11 +3,10 @@ pragma solidity ^0.8.20;
 
 /**
  * @title B2B Supply Chain Escrow & Product Acceptance
- * @dev Smart contract managing escrow funds, shipping tracking, physical delivery, inspection, and automated settlement.
+ * @dev Smart contract implementing Seller Offer -> Buyer Acceptance -> Inspection -> Pull-based Settlement.
  */
 contract SupplyChainEscrow {
 
-    // 1. Lifecycle states of a B2B supply chain escrow order
     enum State { 
         Created, 
         FundsDeposited, 
@@ -17,35 +16,26 @@ contract SupplyChainEscrow {
         RejectedAndRefunded 
     }
 
-    // 2. Structure defining all properties of an escrow order
     struct EscrowOrder {
-        address payable buyer;        // Address of the buyer
-        address payable seller;       // Address of the seller
-        address inspector;            // Address of the independent quality inspector (e.g., SGS)
-        uint256 amount;               // Escrow amount in Wei
-        bytes32 itemHash;             // Cryptographic hash of product specification / invoice
-        uint256 deliveryDeadline;     // Timestamp deadline for the seller to dispatch goods
-        uint256 deliveryTimestamp;    // Timestamp when goods physically arrived at the buyer's facility
-        uint256 inspectionWindow;     // Allowed time window (in seconds) for quality inspection
-        State state;                  // Current state of the escrow order
-        bool isInspected;             // Flag indicating whether inspection was completed
+        address payable buyer;
+        address payable seller;
+        address inspector;
+        uint256 amount;
+        bytes32 itemHash;
+        uint256 deliveryDeadline;
+        uint256 deliveryTimestamp;
+        State state;
+        bool isInspected;
     }
 
-    // 3. State variables (Blockchain Storage)
     uint256 public orderCount;
     mapping(uint256 => EscrowOrder) public orders;
 
-    // 4. Events for DApp interface integration and logging
-    event OrderCreated(
-        uint256 indexed orderId, 
-        address indexed buyer, 
-        address indexed seller, 
-        address inspector,
-        uint256 amount
-    );
+    event OrderCreated(uint256 indexed orderId, address indexed seller, address indexed buyer, uint256 amount);
     event FundsDeposited(uint256 indexed orderId, address indexed buyer, uint256 amount);
     event GoodsDispatched(uint256 indexed orderId, address indexed seller);
     event GoodsDelivered(uint256 indexed orderId, uint256 deliveryTimestamp);
+    event InspectionSubmitted(uint256 indexed orderId, bool passed);
     event OrderAccepted(uint256 indexed orderId, address indexed seller, uint256 amount);
     event OrderRejected(uint256 indexed orderId, address indexed buyer, uint256 amount);
 
@@ -54,55 +44,53 @@ contract SupplyChainEscrow {
     }
 
     /**
-     * @dev Initializes a new escrow order.
+     * @dev Step 1: Seller creates an order offer with specified parameters.
      */
     function createOrder(
-        address payable _seller,
+        address payable _buyer,
         address _inspector,
+        uint256 _amount,
         bytes32 _itemHash,
-        uint256 _deliveryDeadline,
-        uint256 _inspectionWindow
+        uint256 _deliveryDeadline
     ) external returns (uint256) {
-        require(_seller != address(0), "Invalid seller address");
-        require(_inspector != address(0), "Invalid inspector address");
+        require(_buyer != address(0) && _buyer != msg.sender, "Invalid buyer address");
+        require(_inspector != address(0) && _inspector != msg.sender && _inspector != _buyer, "Invalid inspector address");
+        require(_amount > 0, "Amount must be greater than zero");
         require(_deliveryDeadline > block.timestamp, "Deadline must be in the future");
 
         orderCount++;
         orders[orderCount] = EscrowOrder({
-            buyer: payable(msg.sender),
-            seller: _seller,
+            buyer: _buyer,
+            seller: payable(msg.sender),
             inspector: _inspector,
-            amount: 0,
+            amount: _amount,
             itemHash: _itemHash,
             deliveryDeadline: _deliveryDeadline,
             deliveryTimestamp: 0,
-            inspectionWindow: _inspectionWindow,
             state: State.Created,
             isInspected: false
         });
 
-        emit OrderCreated(orderCount, msg.sender, _seller, _inspector, 0);
+        emit OrderCreated(orderCount, msg.sender, _buyer, _amount);
         return orderCount;
     }
 
     /**
-     * @dev Deposits funds into escrow vault for a specific order.
+     * @dev Step 2: Buyer deposits funds (accepts seller's offer).
      */
     function depositFunds(uint256 _orderId) external payable {
         EscrowOrder storage order = orders[_orderId];
 
-        require(msg.sender == order.buyer, "Only buyer can deposit funds");
+        require(msg.sender == order.buyer, "Only designated buyer can deposit funds");
         require(order.state == State.Created, "Invalid order state for deposit");
-        require(msg.value > 0, "Deposit amount must be greater than zero");
+        require(msg.value == order.amount, "Must deposit exact order amount");
 
-        order.amount = msg.value;
         order.state = State.FundsDeposited;
-
         emit FundsDeposited(_orderId, msg.sender, msg.value);
     }
 
     /**
-     * @dev Seller confirms shipment of goods before deadline.
+     * @dev Step 3: Seller confirms dispatch of goods before deadline.
      */
     function confirmDispatch(uint256 _orderId) external {
         EscrowOrder storage order = orders[_orderId];
@@ -116,7 +104,7 @@ contract SupplyChainEscrow {
     }
 
     /**
-     * @dev Seller confirms physical delivery to buyer's warehouse.
+     * @dev Step 4: Seller confirms physical delivery to buyer's location.
      */
     function confirmDelivery(uint256 _orderId) external {
         EscrowOrder storage order = orders[_orderId];
@@ -126,12 +114,11 @@ contract SupplyChainEscrow {
 
         order.state = State.Delivered;
         order.deliveryTimestamp = block.timestamp;
-
         emit GoodsDelivered(_orderId, block.timestamp);
     }
 
     /**
-     * @dev Independent inspector submits quality report.
+     * @dev Step 5: Independent inspector submits inspection report (true/false).
      */
     function submitInspectionReport(uint256 _orderId, bool _passed) external {
         EscrowOrder storage order = orders[_orderId];
@@ -140,16 +127,17 @@ contract SupplyChainEscrow {
         require(order.state == State.Delivered, "Goods must be delivered first");
 
         order.isInspected = _passed;
+        emit InspectionSubmitted(_orderId, _passed);
     }
 
     /**
-     * @dev Buyer accepts goods and releases escrow funds to seller.
+     * @dev Step 6a: Seller claims payment if inspection passed (isInspected == true).
      */
-    function acceptGoodsAndPay(uint256 _orderId) external {
+    function claimPayment(uint256 _orderId) external {
         EscrowOrder storage order = orders[_orderId];
 
-        require(msg.sender == order.buyer, "Only buyer can accept and pay");
-        require(order.state == State.Delivered, "Invalid order state for payment");
+        require(msg.sender == order.seller, "Only seller can claim payment");
+        require(order.state == State.Delivered, "Order must be in Delivered state");
         require(order.isInspected, "Inspection must pass before payment");
 
         order.state = State.AcceptedAndPaid;
@@ -161,17 +149,17 @@ contract SupplyChainEscrow {
     }
 
     /**
-     * @dev Buyer claims refund if seller misses delivery deadline or inspection fails.
+     * @dev Step 6b: Buyer claims refund if delivery deadline passed OR inspection failed.
      */
     function claimRefund(uint256 _orderId) external {
         EscrowOrder storage order = orders[_orderId];
 
         require(msg.sender == order.buyer, "Only buyer can claim refund");
 
-        bool isExpired = (order.state == State.FundsDeposited && block.timestamp > order.deliveryDeadline);
-        bool isRejected = (order.state == State.Delivered && !order.isInspected);
+        bool deadlinePassed = (order.state == State.FundsDeposited && block.timestamp > order.deliveryDeadline);
+        bool inspectionFailed = (order.state == State.Delivered && !order.isInspected);
 
-        require(isExpired || isRejected, "Refund conditions not met");
+        require(deadlinePassed || inspectionFailed, "Refund conditions not met");
 
         order.state = State.RejectedAndRefunded;
 
