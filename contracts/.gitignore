@@ -1,0 +1,17 @@
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE & Editor settings
+.vscode/
+.idea/
+
+# Dependencies & Build artifacts
+node_modules/
+build/
+cache/
+artifacts/
+
+# Security & Secrets (Environment variables)
+.env
+*.pem
