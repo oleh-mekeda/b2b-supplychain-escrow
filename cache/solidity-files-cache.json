@@ -1,0 +1,41 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\Oleg\\b2b-supplychain-escrow-L00206118\\contracts\\SupplyChainEscrow.sol": {
+      "lastModificationDate": 1795187348730,
+      "contentHash": "16a09a5d95e60f09e0bd03f5536b5e4b",
+      "sourceName": "contracts/SupplyChainEscrow.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "SupplyChainEscrow"
+      ]
+    }
+  }
+}
